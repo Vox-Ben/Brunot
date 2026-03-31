@@ -27,7 +27,10 @@ def send_request(
     headers = dict(headers or {})
     params = dict(params or {})
 
-    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+    # Use direct network access and ignore HTTP(S)_PROXY/NO_PROXY env by default.
+    # In some desktop/devcontainer setups, inherited proxy env vars can cause
+    # name-resolution failures for internal hostnames that are otherwise reachable.
+    with httpx.Client(timeout=timeout, follow_redirects=True, trust_env=False) as client:
         resp = client.request(method=method.upper(), url=url, headers=headers, params=params, content=body)
 
     return HttpResponse(
