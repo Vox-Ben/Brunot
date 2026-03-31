@@ -10,6 +10,7 @@ from typing import Optional
 from PySide6.QtCore import QObject, QThread, Qt, Signal, qInstallMessageHandler
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QDialog,
     QFileDialog,
     QFormLayout,
@@ -30,6 +31,7 @@ from ..bru_parser import save_request_to_file
 from ..http_client import send_request
 from ..model import Collection, Request, create_empty_collection, load_collection
 from ..settings import Settings, load_settings, save_settings
+from ..variable_file_loader import merge_variable_files
 from .navigation import CollectionTree
 from .request_editor import RequestEditor
 from .response_viewer import ResponseViewer
@@ -83,7 +85,12 @@ class RequestLogDialog(QDialog):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, current_timeout: int, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        current_timeout: int,
+        variable_preference: str,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
         layout = QVBoxLayout(self)
@@ -93,6 +100,14 @@ class SettingsDialog(QDialog):
         self.timeout_spin.setMaximum(600)
         self.timeout_spin.setValue(current_timeout)
         form.addRow(QLabel("Request timeout (seconds)"), self.timeout_spin)
+
+        self.variable_preference_combo = QComboBox()
+        self.variable_preference_combo.addItem("Prefer environment variables", "env")
+        self.variable_preference_combo.addItem("Prefer variable files", "files")
+        idx = self.variable_preference_combo.findData(variable_preference)
+        if idx >= 0:
+            self.variable_preference_combo.setCurrentIndex(idx)
+        form.addRow(QLabel("Variable resolution"), self.variable_preference_combo)
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -346,12 +361,30 @@ class MainWindow(QMainWindow):
         extracted_names = self._extract_request_variable_names(request)
         if not extracted_names:
             return
+        file_vars = merge_variable_files(self.settings.variable_files)
+        prefer_files = self.settings.variable_preference == "files"
+
         for name in sorted(extracted_names):
             current_value = request.variables.get(name, "")
             if current_value:
                 continue
             env_value = os.environ.get(name)
-            request.variables[name] = env_value if env_value is not None else ""
+            in_file = name in file_vars
+
+            if prefer_files:
+                if in_file:
+                    request.variables[name] = file_vars[name]
+                elif env_value is not None:
+                    request.variables[name] = env_value
+                else:
+                    request.variables[name] = ""
+            else:
+                if env_value is not None:
+                    request.variables[name] = env_value
+                elif in_file:
+                    request.variables[name] = file_vars[name]
+                else:
+                    request.variables[name] = ""
 
     def _missing_required_variables(self, request: Request) -> list[str]:
         extracted_names = self._extract_request_variable_names(request)
@@ -566,12 +599,19 @@ class MainWindow(QMainWindow):
         self._log_dialog.activateWindow()
 
     def open_settings(self) -> None:
-        dialog = SettingsDialog(self.settings.request_timeout_seconds, self)
+        dialog = SettingsDialog(
+            self.settings.request_timeout_seconds,
+            self.settings.variable_preference,
+            self,
+        )
         if dialog.exec() == QDialog.Accepted:
             self.settings.request_timeout_seconds = dialog.timeout_spin.value()
+            self.settings.variable_preference = str(
+                dialog.variable_preference_combo.currentData()
+            )
             save_settings(self.settings)
             self.statusBar().showMessage(
-                f"Updated timeout to {self.settings.request_timeout_seconds} seconds.",
+                "Settings saved.",
                 3000,
             )
 
