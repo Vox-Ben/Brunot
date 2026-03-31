@@ -141,6 +141,7 @@ class MainWindow(QMainWindow):
         self.request_editor.cancel_requested.connect(self.cancel_request_wait)
         self.request_editor.request_changed.connect(self.on_request_changed)
         self.request_editor.save_variables_to_file_requested.connect(self.save_variables_to_variable_file)
+        self.request_editor.reload_variables_requested.connect(self.reload_variables_from_sources)
 
         splitter = QSplitter(Qt.Horizontal)
         right_widget = QWidget()
@@ -361,6 +362,24 @@ class MainWindow(QMainWindow):
         names.update(self._extract_variable_names_from_text(request.body or ""))
         return names
 
+    @staticmethod
+    def _resolve_variable_from_sources(
+        name: str, file_vars: dict[str, str], prefer_files: bool
+    ) -> str:
+        env_value = os.environ.get(name)
+        in_file = name in file_vars
+        if prefer_files:
+            if in_file:
+                return file_vars[name]
+            if env_value is not None:
+                return env_value
+            return ""
+        if env_value is not None:
+            return env_value
+        if in_file:
+            return file_vars[name]
+        return ""
+
     def _populate_request_variables_from_fields(self, request: Request) -> None:
         extracted_names = self._extract_request_variable_names(request)
         if not extracted_names:
@@ -369,26 +388,23 @@ class MainWindow(QMainWindow):
         prefer_files = self.settings.variable_preference == "files"
 
         for name in sorted(extracted_names):
-            current_value = request.variables.get(name, "")
-            if current_value:
+            if request.variables.get(name, ""):
                 continue
-            env_value = os.environ.get(name)
-            in_file = name in file_vars
+            request.variables[name] = self._resolve_variable_from_sources(
+                name, file_vars, prefer_files
+            )
 
-            if prefer_files:
-                if in_file:
-                    request.variables[name] = file_vars[name]
-                elif env_value is not None:
-                    request.variables[name] = env_value
-                else:
-                    request.variables[name] = ""
-            else:
-                if env_value is not None:
-                    request.variables[name] = env_value
-                elif in_file:
-                    request.variables[name] = file_vars[name]
-                else:
-                    request.variables[name] = ""
+    def _reload_request_variables_from_sources(self, request: Request) -> None:
+        extracted_names = self._extract_request_variable_names(request)
+        if not extracted_names:
+            return
+        file_vars = merge_variable_file_entries(self.settings.variable_file_entries)
+        prefer_files = self.settings.variable_preference == "files"
+        for name in sorted(extracted_names):
+            request.variables[name] = self._resolve_variable_from_sources(
+                name, file_vars, prefer_files
+            )
+        request.dirty = True
 
     def _missing_required_variables(self, request: Request) -> list[str]:
         extracted_names = self._extract_request_variable_names(request)
@@ -635,6 +651,20 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save variables", str(exc))
             return
         self.statusBar().showMessage(f"Saved variables to {path}", 4000)
+
+    def reload_variables_from_sources(self, request: Request) -> None:
+        """Replace values for {{variables}} used in the request using env + files and Settings precedence."""
+        if not self._extract_request_variable_names(request):
+            self.statusBar().showMessage(
+                "No variables referenced in URL, headers, or body.",
+                4000,
+            )
+            return
+        self._reload_request_variables_from_sources(request)
+        self.request_editor.set_request(request)
+        pref = self.settings.variable_preference
+        label = "variable files, then environment" if pref == "files" else "environment, then variable files"
+        self.statusBar().showMessage(f"Variables reloaded ({label}).", 4000)
 
     def open_variable_files(self) -> None:
         dlg = VariableFilesDialog(self.settings.variable_file_entries, self)
