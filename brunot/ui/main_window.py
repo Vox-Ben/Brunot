@@ -256,8 +256,10 @@ class MainWindow(QMainWindow):
             save_request_to_file(req)
             existing_paths.add(req.path)
 
+        # Do not force a full recursive reload here: the chosen directory can be very large.
+        # We already have the in-memory model and updated file paths.
         self.collection.root_path = selected_path.parent
-        self.load_collection_path(selected_path.parent)
+        self.tree.set_collection(self.collection)
         self.statusBar().showMessage(f"Saved collection to {selected_path.parent}", 4000)
 
     def _iter_requests(self) -> list[Request]:

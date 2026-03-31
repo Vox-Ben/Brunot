@@ -45,6 +45,9 @@ def load_collection(root_path: Path) -> Collection:
     def walk_dir(path: Path) -> Folder:
         folder = Folder(name=path.name, path=path)
         for entry in sorted(path.iterdir(), key=lambda p: p.name):
+            # Avoid recursive loops and expensive traversal through symlinked directories.
+            if entry.is_symlink():
+                continue
             if entry.is_dir():
                 folder.folders.append(walk_dir(entry))
             elif entry.is_file() and entry.suffix == ".bru":
