@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Iterable, List
+
+
+@dataclass
+class VariableFileEntry:
+    """One variable file in config: logical id, path on disk, and whether it is active."""
+
+    file_id: str
+    path: str
+    enabled: bool = True
 
 
 def parse_variable_file(path: Path) -> Dict[str, str]:
@@ -30,14 +40,30 @@ def parse_variable_file(path: Path) -> Dict[str, str]:
     return out
 
 
-def merge_variable_files(paths_by_alias: Dict[str, str]) -> Dict[str, str]:
+def write_variable_file(path: Path, variables: Dict[str, str]) -> None:
+    """Write KEY=value pairs (sorted keys) in dotenv-style."""
+    path = path.expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f"{k}={variables[k]}" for k in sorted(variables.keys())]
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+
+def merge_variable_file_entries(entries: Iterable[VariableFileEntry]) -> Dict[str, str]:
     """
-    Load and merge all variable files. Later paths override earlier keys
-    (iteration order follows the mapping order).
+    Load and merge enabled variable files in list order.
+    Later files override earlier keys.
     """
     merged: Dict[str, str] = {}
-    for _alias, file_path in paths_by_alias.items():
-        p = Path(file_path).expanduser().resolve()
+    for entry in entries:
+        if not entry.enabled:
+            continue
+        p = Path(entry.path).expanduser().resolve()
         for k, v in parse_variable_file(p).items():
             merged[k] = v
     return merged
+
+
+# Backwards-compatible name used by older call sites
+def merge_variable_files(paths_by_alias: Dict[str, str]) -> Dict[str, str]:
+    entries = [VariableFileEntry(file_id=k, path=v, enabled=True) for k, v in paths_by_alias.items()]
+    return merge_variable_file_entries(entries)

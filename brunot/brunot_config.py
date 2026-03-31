@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import configparser
 from pathlib import Path
+from typing import List, Optional
+
+from .variable_file_loader import VariableFileEntry
 
 
 FILENAME = ".brunot_config"
@@ -57,22 +60,40 @@ def apply_core_section(
     parser.set("core", "variable_preference", variable_preference)
 
 
-def apply_variable_files_section(parser: configparser.ConfigParser, variable_files: dict[str, str]) -> None:
+def _bool_to_str(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def apply_variable_file_entries(parser: configparser.ConfigParser, entries: List[VariableFileEntry]) -> None:
     if parser.has_section("variable_files"):
         parser.remove_section("variable_files")
+    if parser.has_section("variable_files_enabled"):
+        parser.remove_section("variable_files_enabled")
     parser.add_section("variable_files")
-    for key, value in sorted(variable_files.items()):
-        parser.set("variable_files", key, value)
+    for entry in entries:
+        parser.set("variable_files", entry.file_id, entry.path)
+    parser.add_section("variable_files_enabled")
+    for entry in entries:
+        parser.set("variable_files_enabled", entry.file_id, _bool_to_str(entry.enabled))
+
+
+def apply_window_section(parser: configparser.ConfigParser, geometry_hex: Optional[str]) -> None:
+    if parser.has_section("window"):
+        parser.remove_section("window")
+    if geometry_hex:
+        parser.add_section("window")
+        parser.set("window", "geometry", geometry_hex)
 
 
 def write_resolved_config(
     *,
     timeout_seconds: int,
     variable_preference: str,
-    variable_files: dict[str, str],
+    variable_file_entries: List[VariableFileEntry],
+    window_geometry_hex: Optional[str] = None,
 ) -> None:
     """
-    Write [core] and [variable_files] to the resolved config path.
+    Write [core], [variable_files], [variable_files_enabled], and [window].
     Preserves other sections from the existing file at that path.
     """
     path = resolve_config_write_path()
@@ -81,6 +102,7 @@ def write_resolved_config(
     if path.is_file():
         parser.read(path, encoding="utf-8")
     apply_core_section(parser, timeout_seconds=timeout_seconds, variable_preference=variable_preference)
-    apply_variable_files_section(parser, variable_files)
+    apply_variable_file_entries(parser, variable_file_entries)
+    apply_window_section(parser, window_geometry_hex)
     with path.open("w", encoding="utf-8") as f:
         parser.write(f)

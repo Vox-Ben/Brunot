@@ -31,10 +31,11 @@ from ..bru_parser import save_request_to_file
 from ..http_client import send_request
 from ..model import Collection, Request, create_empty_collection, load_collection
 from ..settings import Settings, load_settings, save_settings
-from ..variable_file_loader import merge_variable_files
+from ..variable_file_loader import merge_variable_file_entries
 from .navigation import CollectionTree
 from .request_editor import RequestEditor
 from .response_viewer import ResponseViewer
+from .variable_files_dialog import VariableFilesDialog
 
 
 def _qt_message_handler(msg_type, context, message) -> None:
@@ -176,6 +177,8 @@ class MainWindow(QMainWindow):
         save_collection_action.triggered.connect(self.save_collection_as)
         settings_action = file_menu.addAction("&Settings...")
         settings_action.triggered.connect(self.open_settings)
+        variable_files_action = file_menu.addAction("Variable &files…")
+        variable_files_action.triggered.connect(self.open_variable_files)
 
         file_menu.addSeparator()
 
@@ -361,7 +364,7 @@ class MainWindow(QMainWindow):
         extracted_names = self._extract_request_variable_names(request)
         if not extracted_names:
             return
-        file_vars = merge_variable_files(self.settings.variable_files)
+        file_vars = merge_variable_file_entries(self.settings.variable_file_entries)
         prefer_files = self.settings.variable_preference == "files"
 
         for name in sorted(extracted_names):
@@ -597,6 +600,13 @@ class MainWindow(QMainWindow):
         self._log_dialog.show()
         self._log_dialog.raise_()
         self._log_dialog.activateWindow()
+
+    def open_variable_files(self) -> None:
+        dlg = VariableFilesDialog(self.settings.variable_file_entries, self)
+        if dlg.exec() == QDialog.Accepted:
+            self.settings.variable_file_entries = dlg.result_entries()
+            save_settings(self.settings)
+            self.statusBar().showMessage("Variable files saved.", 3000)
 
     def open_settings(self) -> None:
         dialog = SettingsDialog(
