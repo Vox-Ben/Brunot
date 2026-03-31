@@ -28,6 +28,7 @@ class RequestEditor(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._request: Optional[Request] = None
+        self._loading_request = False
 
         self.method_combo = QComboBox()
         self.method_combo.addItems(["GET", "POST", "PUT", "PATCH", "DELETE"])
@@ -71,22 +72,33 @@ class RequestEditor(QWidget):
         self.body_edit.textChanged.connect(self._on_edited)
 
     def set_request(self, request: Request) -> None:
-        self._request = request
-        self.method_combo.setCurrentText(request.method.upper())
-        self.url_edit.setText(request.url)
+        self._loading_request = True
+        try:
+            self._request = request
+            self.method_combo.blockSignals(True)
+            self.url_edit.blockSignals(True)
+            self.body_edit.blockSignals(True)
+            self.headers_table.blockSignals(True)
 
-        self.headers_table.blockSignals(True)
-        self.headers_table.setRowCount(0)
-        for key, value in sorted(request.headers.items()):
-            row = self.headers_table.rowCount()
-            self.headers_table.insertRow(row)
-            self.headers_table.setItem(row, 0, QTableWidgetItem(key))
-            self.headers_table.setItem(row, 1, QTableWidgetItem(value))
-        # always keep one empty row for convenience
-        self.headers_table.insertRow(self.headers_table.rowCount())
-        self.headers_table.blockSignals(False)
+            self.method_combo.setCurrentText(request.method.upper())
+            self.url_edit.setText(request.url)
 
-        self.body_edit.setPlainText(request.body or "")
+            self.headers_table.setRowCount(0)
+            for key, value in sorted(request.headers.items()):
+                row = self.headers_table.rowCount()
+                self.headers_table.insertRow(row)
+                self.headers_table.setItem(row, 0, QTableWidgetItem(key))
+                self.headers_table.setItem(row, 1, QTableWidgetItem(value))
+            # always keep one empty row for convenience
+            self.headers_table.insertRow(self.headers_table.rowCount())
+
+            self.body_edit.setPlainText(request.body or "")
+        finally:
+            self.method_combo.blockSignals(False)
+            self.url_edit.blockSignals(False)
+            self.body_edit.blockSignals(False)
+            self.headers_table.blockSignals(False)
+            self._loading_request = False
 
     def _collect_headers(self) -> Dict[str, str]:
         headers: Dict[str, str] = {}
@@ -115,7 +127,7 @@ class RequestEditor(QWidget):
             self.headers_table.blockSignals(False)
 
     def _on_edited(self) -> None:
-        if not self._request:
+        if not self._request or self._loading_request:
             return
         self._ensure_blank_header_row()
         self._request.method = self.method_combo.currentText()
