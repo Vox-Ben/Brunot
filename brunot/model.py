@@ -24,6 +24,7 @@ class Request:
     url: str
     headers: Dict[str, str] = field(default_factory=dict)
     query: Dict[str, str] = field(default_factory=dict)
+    variables: Dict[str, str] = field(default_factory=dict)
     body: str | None = None
     path: Optional[Path] = None
     dirty: bool = False

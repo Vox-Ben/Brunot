@@ -40,6 +40,11 @@ class RequestEditor(QWidget):
         self.headers_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.headers_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
 
+        self.variables_table = QTableWidget(0, 2)
+        self.variables_table.setHorizontalHeaderLabels(["Variable", "Value"])
+        self.variables_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.variables_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+
         self.body_edit = QTextEdit()
 
         self.send_button = QPushButton("Send")
@@ -58,6 +63,8 @@ class RequestEditor(QWidget):
         layout.addLayout(top_layout)
         layout.addWidget(QLabel("Headers"))
         layout.addWidget(self.headers_table)
+        layout.addWidget(QLabel("Variables"))
+        layout.addWidget(self.variables_table)
         layout.addWidget(QLabel("Body"))
         layout.addWidget(self.body_edit)
         layout.addWidget(self.waiting_label)
@@ -69,6 +76,7 @@ class RequestEditor(QWidget):
         self.method_combo.currentTextChanged.connect(self._on_edited)
         self.url_edit.textChanged.connect(self._on_edited)
         self.headers_table.itemChanged.connect(self._on_edited)
+        self.variables_table.itemChanged.connect(self._on_edited)
         self.body_edit.textChanged.connect(self._on_edited)
 
     def set_request(self, request: Request) -> None:
@@ -79,6 +87,7 @@ class RequestEditor(QWidget):
             self.url_edit.blockSignals(True)
             self.body_edit.blockSignals(True)
             self.headers_table.blockSignals(True)
+            self.variables_table.blockSignals(True)
 
             self.method_combo.setCurrentText(request.method.upper())
             self.url_edit.setText(request.url)
@@ -92,12 +101,21 @@ class RequestEditor(QWidget):
             # always keep one empty row for convenience
             self.headers_table.insertRow(self.headers_table.rowCount())
 
+            self.variables_table.setRowCount(0)
+            for key, value in sorted(request.variables.items()):
+                row = self.variables_table.rowCount()
+                self.variables_table.insertRow(row)
+                self.variables_table.setItem(row, 0, QTableWidgetItem(key))
+                self.variables_table.setItem(row, 1, QTableWidgetItem(value))
+            self.variables_table.insertRow(self.variables_table.rowCount())
+
             self.body_edit.setPlainText(request.body or "")
         finally:
             self.method_combo.blockSignals(False)
             self.url_edit.blockSignals(False)
             self.body_edit.blockSignals(False)
             self.headers_table.blockSignals(False)
+            self.variables_table.blockSignals(False)
             self._loading_request = False
 
     def _collect_headers(self) -> Dict[str, str]:
@@ -113,26 +131,41 @@ class RequestEditor(QWidget):
                 headers[key] = val
         return headers
 
-    def _ensure_blank_header_row(self) -> None:
-        if self.headers_table.rowCount() == 0:
-            self.headers_table.insertRow(0)
+    def _collect_key_value_table(self, table: QTableWidget) -> Dict[str, str]:
+        values: Dict[str, str] = {}
+        for row in range(table.rowCount()):
+            key_item = table.item(row, 0)
+            val_item = table.item(row, 1)
+            if not key_item or not val_item:
+                continue
+            key = key_item.text().strip()
+            val = val_item.text()
+            if key:
+                values[key] = val
+        return values
+
+    def _ensure_blank_row(self, table: QTableWidget) -> None:
+        if table.rowCount() == 0:
+            table.insertRow(0)
             return
-        last_row = self.headers_table.rowCount() - 1
-        last_key = self.headers_table.item(last_row, 0)
-        last_val = self.headers_table.item(last_row, 1)
+        last_row = table.rowCount() - 1
+        last_key = table.item(last_row, 0)
+        last_val = table.item(last_row, 1)
         has_content = (last_key and last_key.text().strip()) or (last_val and last_val.text().strip())
         if has_content:
-            self.headers_table.blockSignals(True)
-            self.headers_table.insertRow(self.headers_table.rowCount())
-            self.headers_table.blockSignals(False)
+            table.blockSignals(True)
+            table.insertRow(table.rowCount())
+            table.blockSignals(False)
 
     def _on_edited(self) -> None:
         if not self._request or self._loading_request:
             return
-        self._ensure_blank_header_row()
+        self._ensure_blank_row(self.headers_table)
+        self._ensure_blank_row(self.variables_table)
         self._request.method = self.method_combo.currentText()
         self._request.url = self.url_edit.text()
-        self._request.headers = self._collect_headers()
+        self._request.headers = self._collect_key_value_table(self.headers_table)
+        self._request.variables = self._collect_key_value_table(self.variables_table)
         self._request.body = self.body_edit.toPlainText()
         self._request.dirty = True
         self.request_changed.emit(self._request)

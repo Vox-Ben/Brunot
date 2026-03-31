@@ -9,6 +9,7 @@ from .model import Request
 SECTION_META = "meta"
 SECTION_HEADERS = "headers"
 SECTION_QUERY = "query"
+SECTION_VARS = "vars"
 
 
 def load_request_from_file(path: Path) -> Request:
@@ -31,6 +32,7 @@ def parse_bru(text: str, path: Optional[Path] = None) -> Request:
     meta: Dict[str, str] = {}
     headers: Dict[str, str] = {}
     query: Dict[str, str] = {}
+    variables: Dict[str, str] = {}
     body_lines: List[str] = []
 
     i = 0
@@ -72,6 +74,8 @@ def parse_bru(text: str, path: Optional[Path] = None) -> Request:
                 headers[key] = value
             elif section == SECTION_QUERY:
                 query[key] = value
+            elif section == SECTION_VARS:
+                variables[key] = value
             # unknown sections are ignored for forward-compatibility
 
         i += 1
@@ -86,6 +90,7 @@ def parse_bru(text: str, path: Optional[Path] = None) -> Request:
         url=url,
         headers=headers,
         query=query,
+        variables=variables,
         body="\n".join(body_lines) if body_lines else None,
         path=path,
     )
@@ -111,6 +116,13 @@ def to_bru(request: Request) -> str:
         lines.append("")
         lines.append("query {")
         for k, v in request.query.items():
+            lines.append(f"  {k}: {v}")
+        lines.append("}")
+
+    if request.variables:
+        lines.append("")
+        lines.append("vars {")
+        for k, v in request.variables.items():
             lines.append(f"  {k}: {v}")
         lines.append("}")
 

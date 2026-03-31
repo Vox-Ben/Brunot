@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -284,6 +285,15 @@ class MainWindow(QMainWindow):
         rendered = json.dumps(payload, indent=2, ensure_ascii=True)
         self._log_dialog.append_entry(f"{title}\n{rendered}")
 
+    def _expand_variables(self, value: str, variables: dict[str, str]) -> str:
+        pattern = re.compile(r"\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}")
+
+        def repl(match: re.Match[str]) -> str:
+            key = match.group(1)
+            return variables.get(key, match.group(0))
+
+        return pattern.sub(repl, value)
+
     # Request handling
     def on_request_selected(self, request: Request) -> None:
         self._current_request = request
@@ -340,23 +350,37 @@ class MainWindow(QMainWindow):
         self._active_request_id += 1
         request_id = self._active_request_id
         timeout = self.settings.request_timeout_seconds
+        expanded_url = self._expand_variables(request.url, request.variables)
+        expanded_headers = {k: self._expand_variables(v, request.variables) for k, v in request.headers.items()}
+        expanded_body = self._expand_variables(request.body or "", request.variables)
         self.request_editor.set_busy(True)
         self.statusBar().showMessage(f"Waiting for response... (timeout {timeout}s)")
         self._log_request_event(
             "REQUEST",
             {
                 "method": request.method,
-                "url": request.url,
-                "headers": request.headers,
+                "url": expanded_url,
+                "headers": expanded_headers,
                 "query": request.query,
-                "has_body": bool(request.body),
+                "has_body": bool(expanded_body),
                 "timeout_seconds": timeout,
+                "variables": request.variables,
             },
         )
 
         thread = QThread(self)
         self._active_request = request
-        worker = RequestWorker(request_id, request, timeout)
+        expanded_request = Request(
+            name=request.name,
+            method=request.method,
+            url=expanded_url,
+            headers=expanded_headers,
+            query=dict(request.query),
+            variables=dict(request.variables),
+            body=expanded_body,
+            path=request.path,
+        )
+        worker = RequestWorker(request_id, expanded_request, timeout)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_request_finished)
