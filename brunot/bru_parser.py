@@ -10,6 +10,7 @@ SECTION_META = "meta"
 SECTION_HEADERS = "headers"
 SECTION_QUERY = "query"
 SECTION_VARS = "vars"
+HTTP_METHOD_SECTIONS = {"get", "post", "put", "patch", "delete"}
 
 
 def load_request_from_file(path: Path) -> Request:
@@ -42,6 +43,22 @@ def parse_bru(text: str, path: Optional[Path] = None) -> Request:
             i += 1
             continue
 
+        # Handle typed body blocks like: body:json { ... }
+        if line.startswith("body:") and line.endswith("{"):
+            body_lines = []
+            brace_depth = 1
+            i += 1
+            while i < len(lines) and brace_depth > 0:
+                raw_line = lines[i]
+                stripped = raw_line.strip()
+                open_count = stripped.count("{")
+                close_count = stripped.count("}")
+                brace_depth += open_count - close_count
+                if brace_depth > 0:
+                    body_lines.append(raw_line)
+                i += 1
+            continue
+
         if line.endswith("{"):
             name = line.split("{", 1)[0].strip()
             section = name
@@ -52,7 +69,7 @@ def parse_bru(text: str, path: Optional[Path] = None) -> Request:
             i += 1
             continue
 
-        if line.startswith("body:"):
+        if section is None and line.startswith("body:"):
             # body: | or inline; for MVP treat the rest as body
             content = line[len("body:") :].lstrip()
             if content == "|":
@@ -76,12 +93,21 @@ def parse_bru(text: str, path: Optional[Path] = None) -> Request:
                 query[key] = value
             elif section == SECTION_VARS:
                 variables[key] = value
+            elif section in HTTP_METHOD_SECTIONS:
+                # Bruno HTTP-style block, e.g. post { url: ... }
+                if key == "url":
+                    meta["url"] = value
             # unknown sections are ignored for forward-compatibility
 
         i += 1
 
     name = meta.get("name", path.stem if path else "Request")
     method = meta.get("method", "GET")
+    if method.upper() == "GET":
+        for section_name in HTTP_METHOD_SECTIONS:
+            if f"{section_name} {{" in text.lower():
+                method = section_name.upper()
+                break
     url = meta.get("url", "")
 
     return Request(
