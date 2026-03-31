@@ -16,6 +16,7 @@ CONFIG_FILE = CONFIG_DIR / "settings.json"
 class Settings:
     recent_collections: List[str] = field(default_factory=list)
     window_geometry: bytes | None = None  # stored as hex in JSON
+    request_timeout_seconds: int = 30
 
     def to_json(self) -> dict:
         data = asdict(self)
@@ -30,6 +31,7 @@ class Settings:
         return cls(
             recent_collections=list(data.get("recent_collections", [])),
             window_geometry=geometry,
+            request_timeout_seconds=int(data.get("request_timeout_seconds", 30)),
         )
 
 

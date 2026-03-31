@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, qInstallMessageHandler
+from PySide6.QtCore import QObject, QThread, Qt, Signal, qInstallMessageHandler
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFileDialog,
+    QFormLayout,
     QInputDialog,
+    QLabel,
+    QDialogButtonBox,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
+    QSpinBox,
     QSplitter,
     QStatusBar,
     QVBoxLayout,
@@ -33,12 +40,74 @@ def _qt_message_handler(msg_type, context, message) -> None:
     sys.stderr.write(f"{message}\n")
 
 
+class RequestWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, request: Request, timeout_seconds: int) -> None:
+        super().__init__()
+        self.request = request
+        self.timeout_seconds = timeout_seconds
+
+    def run(self) -> None:
+        try:
+            response = send_request(
+                method=self.request.method,
+                url=self.request.url,
+                headers=self.request.headers,
+                params=self.request.query,
+                body=self.request.body or "",
+                timeout=float(self.timeout_seconds),
+            )
+            self.finished.emit(response)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class RequestLogDialog(QDialog):
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Request Log")
+        self.resize(800, 500)
+        self.log_view = QPlainTextEdit()
+        self.log_view.setReadOnly(True)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.log_view)
+
+    def append_entry(self, text: str) -> None:
+        self.log_view.appendPlainText(text)
+        self.log_view.appendPlainText("")
+
+
+class SettingsDialog(QDialog):
+    def __init__(self, current_timeout: int, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.timeout_spin = QSpinBox()
+        self.timeout_spin.setMinimum(1)
+        self.timeout_spin.setMaximum(600)
+        self.timeout_spin.setValue(current_timeout)
+        form.addRow(QLabel("Request timeout (seconds)"), self.timeout_spin)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, settings: Settings, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.settings = settings
         self.collection: Optional[Collection] = None
         self._current_request: Optional[Request] = None
+        self._active_thread: Optional[QThread] = None
+        self._active_worker: Optional[RequestWorker] = None
+        self._active_request_id = 0
+        self._log_dialog = RequestLogDialog(self)
 
         self.setWindowTitle("Brunot")
 
@@ -48,6 +117,7 @@ class MainWindow(QMainWindow):
 
         self.tree.request_selected.connect(self.on_request_selected)
         self.request_editor.send_requested.connect(self.on_send_request)
+        self.request_editor.cancel_requested.connect(self.cancel_request_wait)
         self.request_editor.request_changed.connect(self.on_request_changed)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -84,6 +154,8 @@ class MainWindow(QMainWindow):
         reload_action.triggered.connect(self.reload_collection)
         save_collection_action = file_menu.addAction("Save Collection &As...")
         save_collection_action.triggered.connect(self.save_collection_as)
+        settings_action = file_menu.addAction("&Settings...")
+        settings_action.triggered.connect(self.open_settings)
 
         file_menu.addSeparator()
 
@@ -95,6 +167,10 @@ class MainWindow(QMainWindow):
         new_request_action.triggered.connect(self.new_request)
         save_request_action = request_menu.addAction("&Save Current Request")
         save_request_action.triggered.connect(self.save_current_request)
+
+        view_menu = self.menuBar().addMenu("&View")
+        log_action = view_menu.addAction("Request &Log")
+        log_action.triggered.connect(self.show_request_log)
 
     def _restore_geometry(self) -> None:
         if self.settings.window_geometry:
@@ -136,20 +212,51 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No Collection", "No collection to save.")
             return
 
-        directory = QFileDialog.getExistingDirectory(self, "Save Collection As")
-        if not directory:
+        default_path = "collection.bru"
+        if self._current_request:
+            default_path = f"{self._safe_filename(self._current_request.name)}.bru"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Collection As",
+            default_path,
+            "Bru files (*.bru)",
+        )
+        if not file_path:
             return
 
-        root_path = Path(directory)
-        root_path.mkdir(parents=True, exist_ok=True)
+        selected_path = Path(file_path)
+        if selected_path.suffix != ".bru":
+            selected_path = selected_path.with_suffix(".bru")
+        selected_path.parent.mkdir(parents=True, exist_ok=True)
 
-        for req in self._iter_requests():
-            if req.path is None:
-                req.path = root_path / f"{self._safe_filename(req.name)}.bru"
+        requests = self._iter_requests()
+        if not requests:
+            selected_path.write_text("", encoding="utf-8")
+            self.collection.root_path = selected_path.parent
+            self.statusBar().showMessage(f"Saved empty collection at {selected_path}", 4000)
+            return
+
+        primary_request = self._current_request or requests[0]
+        primary_request.path = selected_path
+        save_request_to_file(primary_request)
+
+        existing_paths: set[Path] = {selected_path}
+        for req in requests:
+            if req is primary_request:
+                continue
+            if req.path is None or req.path in existing_paths:
+                candidate = selected_path.parent / f"{self._safe_filename(req.name)}.bru"
+                suffix = 1
+                while candidate in existing_paths:
+                    candidate = selected_path.parent / f"{self._safe_filename(req.name)}_{suffix}.bru"
+                    suffix += 1
+                req.path = candidate
             save_request_to_file(req)
+            existing_paths.add(req.path)
 
-        self.load_collection_path(root_path)
-        self.statusBar().showMessage(f"Saved collection to {root_path}", 4000)
+        self.collection.root_path = selected_path.parent
+        self.load_collection_path(selected_path.parent)
+        self.statusBar().showMessage(f"Saved collection to {selected_path.parent}", 4000)
 
     def _iter_requests(self) -> list[Request]:
         if not self.collection:
@@ -168,6 +275,10 @@ class MainWindow(QMainWindow):
     def _safe_filename(self, name: str) -> str:
         cleaned = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in name.strip())
         return cleaned or "request"
+
+    def _log_request_event(self, title: str, payload: dict) -> None:
+        rendered = json.dumps(payload, indent=2, ensure_ascii=True)
+        self._log_dialog.append_entry(f"{title}\n{rendered}")
 
     # Request handling
     def on_request_selected(self, request: Request) -> None:
@@ -220,23 +331,100 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save Error", f"Failed to save request:\n{exc}")
 
     def on_send_request(self, request: Request) -> None:
-        try:
-            resp = send_request(
-                method=request.method,
-                url=request.url,
-                headers=request.headers,
-                params=request.query,
-                body=request.body or "",
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Request Error", str(exc))
+        if self._active_thread is not None:
             return
+        self._active_request_id += 1
+        request_id = self._active_request_id
+        timeout = self.settings.request_timeout_seconds
+        self.request_editor.set_busy(True)
+        self.statusBar().showMessage(f"Waiting for response... (timeout {timeout}s)")
+        self._log_request_event(
+            "REQUEST",
+            {
+                "method": request.method,
+                "url": request.url,
+                "headers": request.headers,
+                "query": request.query,
+                "has_body": bool(request.body),
+                "timeout_seconds": timeout,
+            },
+        )
 
+        thread = QThread(self)
+        worker = RequestWorker(request, timeout)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(lambda resp: self._on_request_finished(request_id, request, resp))
+        worker.failed.connect(lambda error: self._on_request_failed(request_id, request, error))
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_request_thread_finished)
+        self._active_thread = thread
+        self._active_worker = worker
+        thread.start()
+
+    def cancel_request_wait(self) -> None:
+        if self._active_thread is None:
+            return
+        self._active_request_id += 1
+        self.request_editor.set_busy(False)
+        self.statusBar().showMessage("Request wait cancelled.", 3000)
+        self._log_request_event("REQUEST_CANCELLED", {"message": "User cancelled waiting for response."})
+
+    def _on_request_finished(self, request_id: int, request: Request, resp) -> None:
+        if request_id != self._active_request_id:
+            return
+        self.request_editor.set_busy(False)
         self.response_viewer.show_response(resp)
         self.statusBar().showMessage(
             f"{request.method} {request.url} → {resp.status_code} in {resp.elapsed_ms:.1f} ms",
             5000,
         )
+        self._log_request_event(
+            "RESPONSE",
+            {
+                "method": request.method,
+                "url": request.url,
+                "status_code": resp.status_code,
+                "elapsed_ms": round(resp.elapsed_ms, 2),
+            },
+        )
+
+    def _on_request_failed(self, request_id: int, request: Request, error: str) -> None:
+        if request_id != self._active_request_id:
+            return
+        self.request_editor.set_busy(False)
+        QMessageBox.critical(self, "Request Error", error)
+        self.statusBar().showMessage("Request failed.", 3000)
+        self._log_request_event(
+            "ERROR",
+            {
+                "method": request.method,
+                "url": request.url,
+                "error": error,
+            },
+        )
+
+    def _on_request_thread_finished(self) -> None:
+        self._active_thread = None
+        self._active_worker = None
+
+    def show_request_log(self) -> None:
+        self._log_dialog.show()
+        self._log_dialog.raise_()
+        self._log_dialog.activateWindow()
+
+    def open_settings(self) -> None:
+        dialog = SettingsDialog(self.settings.request_timeout_seconds, self)
+        if dialog.exec() == QDialog.Accepted:
+            self.settings.request_timeout_seconds = dialog.timeout_spin.value()
+            save_settings(self.settings)
+            self.statusBar().showMessage(
+                f"Updated timeout to {self.settings.request_timeout_seconds} seconds.",
+                3000,
+            )
 
 
 def run_app(argv: list[str]) -> None:

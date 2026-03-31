@@ -22,6 +22,7 @@ from ..model import Request
 
 class RequestEditor(QWidget):
     send_requested = Signal(Request)
+    cancel_requested = Signal()
     request_changed = Signal(Request)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -41,6 +42,10 @@ class RequestEditor(QWidget):
         self.body_edit = QTextEdit()
 
         self.send_button = QPushButton("Send")
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setVisible(False)
+        self.waiting_label = QLabel("Waiting for response...")
+        self.waiting_label.setVisible(False)
 
         top_layout = QGridLayout()
         top_layout.addWidget(QLabel("Method"), 0, 0)
@@ -54,9 +59,12 @@ class RequestEditor(QWidget):
         layout.addWidget(self.headers_table)
         layout.addWidget(QLabel("Body"))
         layout.addWidget(self.body_edit)
+        layout.addWidget(self.waiting_label)
+        layout.addWidget(self.cancel_button, alignment=Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self.send_button, alignment=Qt.AlignmentFlag.AlignRight)
 
         self.send_button.clicked.connect(self._on_send_clicked)
+        self.cancel_button.clicked.connect(self.cancel_requested.emit)
         self.method_combo.currentTextChanged.connect(self._on_edited)
         self.url_edit.textChanged.connect(self._on_edited)
         self.headers_table.itemChanged.connect(self._on_edited)
@@ -123,4 +131,9 @@ class RequestEditor(QWidget):
         # Ensure latest edits are pushed into the model
         self._on_edited()
         self.send_requested.emit(self._request)
+
+    def set_busy(self, is_busy: bool) -> None:
+        self.send_button.setEnabled(not is_busy)
+        self.cancel_button.setVisible(is_busy)
+        self.waiting_label.setVisible(is_busy)
 
