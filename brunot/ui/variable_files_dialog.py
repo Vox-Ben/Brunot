@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -53,6 +53,9 @@ class VariableFilesDialog(QDialog):
         self._entries: List[VariableFileEntry] = [
             VariableFileEntry(e.file_id, e.path, e.enabled) for e in entries
         ]
+        # Pending variable key/value sets per file_id (flushed to disk on OK).
+        self._vars_cache: Dict[str, Dict[str, str]] = {}
+        self._last_row: int = -1
 
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_row_changed)
@@ -73,7 +76,7 @@ class VariableFilesDialog(QDialog):
         self._vars_table.itemChanged.connect(self._on_var_cell_changed)
 
         btn_row1 = QHBoxLayout()
-        self._add_btn = QPushButton("Add file…")
+        self._add_btn = QPushButton("Add or create file…")
         self._add_btn.clicked.connect(self._add_file)
         self._duplicate_btn = QPushButton("Duplicate…")
         self._duplicate_btn.clicked.connect(self._duplicate_file)
@@ -125,7 +128,14 @@ class VariableFilesDialog(QDialog):
     def result_entries(self) -> List[VariableFileEntry]:
         return list(self._entries)
 
+    def _flush_current_table_to_cache(self) -> None:
+        row = self._list.currentRow()
+        if row < 0 or row >= len(self._entries):
+            return
+        self._vars_cache[self._entries[row].file_id] = self._collect_vars_from_table()
+
     def _refresh_list(self) -> None:
+        self._flush_current_table_to_cache()
         self._list.clear()
         for e in self._entries:
             state = "on" if e.enabled else "off"
@@ -136,6 +146,11 @@ class VariableFilesDialog(QDialog):
         return self._list.currentRow()
 
     def _on_row_changed(self, row: int) -> None:
+        if self._last_row >= 0 and self._last_row < len(self._entries):
+            prev = self._entries[self._last_row]
+            self._vars_cache[prev.file_id] = self._collect_vars_from_table()
+        self._last_row = row
+
         self._enabled_cb.blockSignals(True)
         self._id_edit.blockSignals(True)
         self._vars_table.blockSignals(True)
@@ -157,8 +172,9 @@ class VariableFilesDialog(QDialog):
             self._enabled_cb.blockSignals(False)
 
     def _load_vars_table(self, entry: VariableFileEntry) -> None:
-        path = Path(entry.path).expanduser()
-        data = parse_variable_file(path)
+        data = self._vars_cache.get(entry.file_id)
+        if data is None:
+            data = parse_variable_file(Path(entry.path).expanduser())
         self._vars_table.setRowCount(0)
         for key in sorted(data.keys()):
             row = self._vars_table.rowCount()
@@ -199,6 +215,9 @@ class VariableFilesDialog(QDialog):
             QMessageBox.warning(self, "Duplicate id", "That identifier is already in use.")
             self._id_edit.setText(self._entries[row].file_id)
             return
+        old_id = self._entries[row].file_id
+        if old_id in self._vars_cache:
+            self._vars_cache[new_id] = self._vars_cache.pop(old_id)
         self._entries[row].file_id = new_id
         self._refresh_list()
         self._list.setCurrentRow(row)
@@ -207,15 +226,22 @@ class VariableFilesDialog(QDialog):
         pass
 
     def _add_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
+        path, _ = QFileDialog.getSaveFileName(
             self,
-            "Add variable file",
+            "Add or create variable file",
             str(Path.home()),
             "Env files (*.env);;All files (*)",
         )
         if not path:
             return
-        p = Path(path)
+        p = Path(path).expanduser()
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            if not p.exists():
+                write_variable_file(p, {})
+        except OSError as exc:
+            QMessageBox.critical(self, "Add file", str(exc))
+            return
         existing = {e.file_id for e in self._entries}
         default_id = _unique_id(p.stem, existing)
         file_id, ok = QInputDialog.getText(self, "Variable file id", "Identifier:", text=default_id)
@@ -226,6 +252,7 @@ class VariableFilesDialog(QDialog):
             QMessageBox.warning(self, "Duplicate id", "That identifier is already in use.")
             return
         self._entries.append(VariableFileEntry(file_id=file_id, path=str(p.resolve()), enabled=True))
+        self._vars_cache[file_id] = parse_variable_file(p.resolve())
         self._refresh_list()
         self._list.setCurrentRow(len(self._entries) - 1)
 
@@ -269,6 +296,7 @@ class VariableFilesDialog(QDialog):
                 pass
             return
         self._entries.append(VariableFileEntry(file_id=file_id, path=str(dest.resolve()), enabled=True))
+        self._vars_cache[file_id] = parse_variable_file(dest.resolve())
         self._refresh_list()
         self._list.setCurrentRow(len(self._entries) - 1)
 
@@ -276,7 +304,11 @@ class VariableFilesDialog(QDialog):
         row = self._current_index()
         if row < 0 or row >= len(self._entries):
             return
+        self._flush_current_table_to_cache()
+        fid = self._entries[row].file_id
+        self._vars_cache.pop(fid, None)
         del self._entries[row]
+        self._last_row = -1
         self._refresh_list()
         if self._list.count() > 0:
             self._list.setCurrentRow(min(row, self._list.count() - 1))
@@ -313,4 +345,16 @@ class VariableFilesDialog(QDialog):
                 QMessageBox.warning(self, "Validation", f"Duplicate identifier: {e.file_id}")
                 return
             seen.add(e.file_id)
+
+        self._flush_current_table_to_cache()
+        for e in self._entries:
+            vars_dict = self._vars_cache.get(e.file_id)
+            if vars_dict is None:
+                continue
+            path = Path(e.path).expanduser()
+            try:
+                write_variable_file(path, vars_dict)
+            except OSError as exc:
+                QMessageBox.critical(self, "Save", f"{e.file_id}: {exc}")
+                return
         self.accept()
