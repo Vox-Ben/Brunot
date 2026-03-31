@@ -31,7 +31,7 @@ from ..bru_parser import save_request_to_file
 from ..http_client import send_request
 from ..model import Collection, Request, create_empty_collection, load_collection
 from ..settings import Settings, load_settings, save_settings
-from ..variable_file_loader import merge_variable_file_entries
+from ..variable_file_loader import merge_variable_file_entries, parse_variable_file, write_variable_file
 from .navigation import CollectionTree
 from .request_editor import RequestEditor
 from .response_viewer import ResponseViewer
@@ -140,6 +140,7 @@ class MainWindow(QMainWindow):
         self.request_editor.validate_requested.connect(self.on_validate_request)
         self.request_editor.cancel_requested.connect(self.cancel_request_wait)
         self.request_editor.request_changed.connect(self.on_request_changed)
+        self.request_editor.save_variables_to_file_requested.connect(self.save_variables_to_variable_file)
 
         splitter = QSplitter(Qt.Horizontal)
         right_widget = QWidget()
@@ -600,6 +601,40 @@ class MainWindow(QMainWindow):
         self._log_dialog.show()
         self._log_dialog.raise_()
         self._log_dialog.activateWindow()
+
+    def save_variables_to_variable_file(self, request: Request) -> None:
+        """Persist request variable table into a user-chosen active variable file (explicit save only)."""
+        active = [e for e in self.settings.variable_file_entries if e.enabled]
+        if not active:
+            QMessageBox.information(
+                self,
+                "Save variables",
+                "You need at least one active variable file to save variables.\n"
+                "Open File → Variable files… and enable a file, or add one.",
+            )
+            return
+        labels = [f"{e.file_id} — {e.path}" for e in active]
+        choice, ok = QInputDialog.getItem(
+            self,
+            "Save variables to file",
+            "Choose an active variable file:",
+            labels,
+            0,
+            False,
+        )
+        if not ok:
+            return
+        idx = labels.index(choice)
+        entry = active[idx]
+        path = Path(entry.path).expanduser().resolve()
+        merged = dict(parse_variable_file(path))
+        merged.update(request.variables)
+        try:
+            write_variable_file(path, merged)
+        except OSError as exc:
+            QMessageBox.critical(self, "Save variables", str(exc))
+            return
+        self.statusBar().showMessage(f"Saved variables to {path}", 4000)
 
     def open_variable_files(self) -> None:
         dlg = VariableFilesDialog(self.settings.variable_file_entries, self)

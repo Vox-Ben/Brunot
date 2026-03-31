@@ -41,7 +41,14 @@ def parse_variable_file(path: Path) -> Dict[str, str]:
 
 
 def write_variable_file(path: Path, variables: Dict[str, str]) -> None:
-    """Write KEY=value pairs (sorted keys) in dotenv-style."""
+    """
+    Write KEY=value pairs (sorted keys) in dotenv-style.
+
+    Call this only for explicit user actions: saving from the variable files
+    manager, the per-request "Save to variable file" flow, or creating a new
+    empty file when the user adds a path. Do not write from automatic resolution
+    or request editing alone.
+    """
     path = path.expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [f"{k}={variables[k]}" for k in sorted(variables.keys())]
