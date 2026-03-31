@@ -93,9 +93,23 @@ class RequestEditor(QWidget):
                 headers[key] = val
         return headers
 
+    def _ensure_blank_header_row(self) -> None:
+        if self.headers_table.rowCount() == 0:
+            self.headers_table.insertRow(0)
+            return
+        last_row = self.headers_table.rowCount() - 1
+        last_key = self.headers_table.item(last_row, 0)
+        last_val = self.headers_table.item(last_row, 1)
+        has_content = (last_key and last_key.text().strip()) or (last_val and last_val.text().strip())
+        if has_content:
+            self.headers_table.blockSignals(True)
+            self.headers_table.insertRow(self.headers_table.rowCount())
+            self.headers_table.blockSignals(False)
+
     def _on_edited(self) -> None:
         if not self._request:
             return
+        self._ensure_blank_header_row()
         self._request.method = self.method_combo.currentText()
         self._request.url = self.url_edit.text()
         self._request.headers = self._collect_headers()

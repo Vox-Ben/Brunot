@@ -19,6 +19,7 @@ def load_request_from_file(path: Path) -> Request:
 def save_request_to_file(request: Request) -> None:
     if request.path is None:
         raise ValueError("Request.path is not set")
+    request.path.parent.mkdir(parents=True, exist_ok=True)
     text = to_bru(request)
     request.path.write_text(text, encoding="utf-8")
     request.dirty = False

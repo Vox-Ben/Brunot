@@ -23,14 +23,14 @@ class Request:
 @dataclass
 class Folder:
     name: str
-    path: Path
+    path: Optional[Path] = None
     folders: List["Folder"] = field(default_factory=list)
     requests: List[Request] = field(default_factory=list)
 
 
 @dataclass
 class Collection:
-    root_path: Path
+    root_path: Optional[Path]
     name: str
     folders: List[Folder] = field(default_factory=list)
 
@@ -54,4 +54,10 @@ def load_collection(root_path: Path) -> Collection:
 
     collection.folders.append(walk_dir(root_path))
     return collection
+
+
+def create_empty_collection(name: str = "Untitled Collection") -> Collection:
+    """Create an in-memory collection that can be saved later."""
+    root_folder = Folder(name=name, path=None)
+    return Collection(root_path=None, name=name, folders=[root_folder])
 

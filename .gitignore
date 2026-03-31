@@ -1,0 +1,9 @@
+**/__pycache__/
+**/brunot.egg-info/
+**/.venv/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.vscode/
+**/.idea/
+**/.cursor/
+**/.cursor/
