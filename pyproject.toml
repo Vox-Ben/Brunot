@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brunot"
+version = "0.1.0"
+description = "A minimal, local-first, Git-native API client compatible with Bruno .bru collections."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Brunot Contributors" }
+]
+dependencies = [
+  "httpx>=0.27.0",
+  "PySide6>=6.7.0",
+  "platformdirs>=4.0.0",
+]
+
+[project.scripts]
+brunot = "brunot.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["brunot*"]
+
