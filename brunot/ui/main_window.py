@@ -188,16 +188,48 @@ class MainWindow(QMainWindow):
 
     # Collection handling
     def open_collection_folder(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Collection Folder or Request",
+            "",
+            "Bru files (*.bru);;All Files (*)",
+        )
+        if file_path:
+            p = Path(file_path)
+            if p.suffix.lower() == ".bru":
+                folder = p.parent.resolve()
+                self._load_collection_and_select_request(folder, p.resolve())
+                self._add_recent_collection(folder)
+            else:
+                QMessageBox.information(
+                    self,
+                    "Open Collection",
+                    "Please select a .bru file, or cancel to choose a folder only.",
+                )
+            return
+
         directory = QFileDialog.getExistingDirectory(self, "Open Collection Folder")
         if not directory:
             return
         path = Path(directory)
         self.load_collection_path(path)
+        self._add_recent_collection(path)
 
-        # update recent collections
+    def _add_recent_collection(self, path: Path) -> None:
         if str(path) not in self.settings.recent_collections:
             self.settings.recent_collections.insert(0, str(path))
             self.settings.recent_collections = self.settings.recent_collections[:10]
+
+    def _load_collection_and_select_request(self, folder: Path, bru_path: Path) -> None:
+        self.load_collection_path(folder)
+        if not self.collection:
+            return
+        target = bru_path.resolve()
+        for req in self._iter_requests():
+            if req.path and req.path.resolve() == target:
+                self.tree.select_request_by_path(target)
+                self.on_request_selected(req)
+                return
 
     def load_collection_path(self, path: Path) -> None:
         try:
