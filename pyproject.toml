@@ -17,10 +17,19 @@ dependencies = [
   "platformdirs>=4.0.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
 [project.scripts]
 brunot = "brunot.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["brunot*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
 
