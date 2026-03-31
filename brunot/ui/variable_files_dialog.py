@@ -60,6 +60,23 @@ class VariableFilesDialog(QDialog):
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_row_changed)
 
+        self._move_up_btn = QPushButton("Move up")
+        self._move_up_btn.setToolTip("Higher in the list takes precedence when the same variable is defined in multiple active files.")
+        self._move_up_btn.clicked.connect(self._move_entry_up)
+        self._move_down_btn = QPushButton("Move down")
+        self._move_down_btn.setToolTip("Lower in the list has lower precedence for conflicting variable names.")
+        self._move_down_btn.clicked.connect(self._move_entry_down)
+
+        list_panel = QWidget()
+        list_row = QHBoxLayout(list_panel)
+        list_row.setContentsMargins(0, 0, 0, 0)
+        list_row.addWidget(self._list, stretch=1)
+        move_col = QVBoxLayout()
+        move_col.addWidget(self._move_up_btn)
+        move_col.addWidget(self._move_down_btn)
+        move_col.addStretch()
+        list_row.addLayout(move_col)
+
         self._enabled_cb = QCheckBox("Active (include when resolving variables)")
         self._enabled_cb.stateChanged.connect(self._on_enabled_changed)
 
@@ -108,7 +125,7 @@ class VariableFilesDialog(QDialog):
         right_w.setLayout(right)
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self._list)
+        splitter.addWidget(list_panel)
         splitter.addWidget(right_w)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -124,6 +141,7 @@ class VariableFilesDialog(QDialog):
         self._refresh_list()
         if self._list.count() > 0:
             self._list.setCurrentRow(0)
+        self._update_move_buttons()
 
     def result_entries(self) -> List[VariableFileEntry]:
         return list(self._entries)
@@ -141,6 +159,28 @@ class VariableFilesDialog(QDialog):
             state = "on" if e.enabled else "off"
             item = QListWidgetItem(f"[{state}] {e.file_id}\n{e.path}")
             self._list.addItem(item)
+
+    def _update_move_buttons(self) -> None:
+        row = self._list.currentRow()
+        n = len(self._entries)
+        self._move_up_btn.setEnabled(n > 0 and row > 0)
+        self._move_down_btn.setEnabled(n > 0 and row >= 0 and row < n - 1)
+
+    def _move_entry_up(self) -> None:
+        row = self._current_index()
+        if row <= 0:
+            return
+        self._entries[row - 1], self._entries[row] = self._entries[row], self._entries[row - 1]
+        self._refresh_list()
+        self._list.setCurrentRow(row - 1)
+
+    def _move_entry_down(self) -> None:
+        row = self._current_index()
+        if row < 0 or row >= len(self._entries) - 1:
+            return
+        self._entries[row], self._entries[row + 1] = self._entries[row + 1], self._entries[row]
+        self._refresh_list()
+        self._list.setCurrentRow(row + 1)
 
     def _current_index(self) -> int:
         return self._list.currentRow()
@@ -170,6 +210,7 @@ class VariableFilesDialog(QDialog):
             self._vars_table.blockSignals(False)
             self._id_edit.blockSignals(False)
             self._enabled_cb.blockSignals(False)
+        self._update_move_buttons()
 
     def _load_vars_table(self, entry: VariableFileEntry) -> None:
         data = self._vars_cache.get(entry.file_id)

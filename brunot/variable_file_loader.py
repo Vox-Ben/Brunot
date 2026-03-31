@@ -50,8 +50,8 @@ def write_variable_file(path: Path, variables: Dict[str, str]) -> None:
 
 def merge_variable_file_entries(entries: Iterable[VariableFileEntry]) -> Dict[str, str]:
     """
-    Load and merge enabled variable files in list order.
-    Later files override earlier keys.
+    Load and merge enabled variable files in list order (top / first = highest precedence).
+    When the same variable is defined in multiple active files, the first file in the list wins.
     """
     merged: Dict[str, str] = {}
     for entry in entries:
@@ -59,7 +59,8 @@ def merge_variable_file_entries(entries: Iterable[VariableFileEntry]) -> Dict[st
             continue
         p = Path(entry.path).expanduser().resolve()
         for k, v in parse_variable_file(p).items():
-            merged[k] = v
+            if k not in merged:
+                merged[k] = v
     return merged
 
 
