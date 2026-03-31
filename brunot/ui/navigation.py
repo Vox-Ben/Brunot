@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QAbstractItemModel, QModelIndex, QObject, Qt, Signal
+from PySide6.QtCore import QModelIndex, QObject, Qt, Signal
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QTreeView
 
@@ -17,7 +17,11 @@ class CollectionTree(QTreeView):
         self._model = QStandardItemModel()
         self._model.setHorizontalHeaderLabels(["Collection"])
         self.setModel(self._model)
-        self.doubleClicked.connect(self._on_double_clicked)
+        # Some platforms/themes do not reliably deliver double-click events in tree views.
+        # Listen to multiple activation paths so request selection is always responsive.
+        self.doubleClicked.connect(self._on_index_activated)
+        self.clicked.connect(self._on_index_activated)
+        self.activated.connect(self._on_index_activated)
         self.setHeaderHidden(False)
 
     def set_collection(self, collection: Collection) -> None:
@@ -40,7 +44,7 @@ class CollectionTree(QTreeView):
             item.appendRow(req_item)
         return item
 
-    def _on_double_clicked(self, index: QModelIndex) -> None:
+    def _on_index_activated(self, index: QModelIndex) -> None:
         item = self._model.itemFromIndex(index)
         if not item:
             return
