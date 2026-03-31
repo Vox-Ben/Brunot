@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from PySide6.QtWidgets import (
@@ -46,5 +47,15 @@ class ResponseViewer(QWidget):
             self.headers_table.setItem(row, 0, QTableWidgetItem(key))
             self.headers_table.setItem(row, 1, QTableWidgetItem(value))
 
-        self.body_raw.setPlainText(response.body)
+        body_text = response.body
+        content_type = str(response.headers.get("content-type", "")).lower()
+        if "json" in content_type:
+            try:
+                parsed = json.loads(body_text)
+                body_text = json.dumps(parsed, indent=2, ensure_ascii=False)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                # Fallback to raw body if content is not valid JSON.
+                pass
+
+        self.body_raw.setPlainText(body_text)
 
