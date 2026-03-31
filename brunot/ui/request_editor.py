@@ -93,20 +93,20 @@ class RequestEditor(QWidget):
             self.url_edit.setText(request.url)
 
             self.headers_table.setRowCount(0)
-            for key, value in sorted(request.headers.items()):
+            for key, value in request.headers.items():
                 row = self.headers_table.rowCount()
                 self.headers_table.insertRow(row)
-                self.headers_table.setItem(row, 0, QTableWidgetItem(key))
-                self.headers_table.setItem(row, 1, QTableWidgetItem(value))
+                self.headers_table.setItem(row, 0, QTableWidgetItem(str(key)))
+                self.headers_table.setItem(row, 1, QTableWidgetItem(str(value)))
             # always keep one empty row for convenience
             self.headers_table.insertRow(self.headers_table.rowCount())
 
             self.variables_table.setRowCount(0)
-            for key, value in sorted(request.variables.items()):
+            for key, value in request.variables.items():
                 row = self.variables_table.rowCount()
                 self.variables_table.insertRow(row)
-                self.variables_table.setItem(row, 0, QTableWidgetItem(key))
-                self.variables_table.setItem(row, 1, QTableWidgetItem(value))
+                self.variables_table.setItem(row, 0, QTableWidgetItem(str(key)))
+                self.variables_table.setItem(row, 1, QTableWidgetItem(str(value)))
             self.variables_table.insertRow(self.variables_table.rowCount())
 
             self.body_edit.setPlainText(request.body or "")

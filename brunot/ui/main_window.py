@@ -297,7 +297,10 @@ class MainWindow(QMainWindow):
     # Request handling
     def on_request_selected(self, request: Request) -> None:
         self._current_request = request
-        self.request_editor.set_request(request)
+        try:
+            self.request_editor.set_request(request)
+        except Exception as exc:
+            QMessageBox.critical(self, "Load Request Error", f"Failed to load request into editor:\n{exc}")
 
     def on_request_changed(self, request: Request) -> None:
         self.statusBar().showMessage(f"Edited request: {request.name}", 2000)
