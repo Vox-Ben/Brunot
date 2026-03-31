@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QGridLayout,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QPushButton,
@@ -25,6 +26,8 @@ class RequestEditor(QWidget):
     validate_requested = Signal(Request)
     cancel_requested = Signal()
     request_changed = Signal(Request)
+    save_variables_to_file_requested = Signal(Request)
+    reload_variables_requested = Signal(Request)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -66,7 +69,21 @@ class RequestEditor(QWidget):
         layout.addLayout(top_layout)
         layout.addWidget(QLabel("Headers"))
         layout.addWidget(self.headers_table)
-        layout.addWidget(QLabel("Variables"))
+        vars_header = QHBoxLayout()
+        vars_header.addWidget(QLabel("Variables"))
+        vars_header.addStretch()
+        self.save_variables_file_btn = QPushButton("Save to variable file…")
+        self.save_variables_file_btn.setToolTip(
+            "Write the variables in this table into an active variable file (choose which file)."
+        )
+        self.reload_variables_btn = QPushButton("Reload variables")
+        self.reload_variables_btn.setToolTip(
+            "Refresh values for variables used in this request from the environment and variable files "
+            "(order follows Settings → Variable resolution)."
+        )
+        vars_header.addWidget(self.reload_variables_btn)
+        vars_header.addWidget(self.save_variables_file_btn)
+        layout.addLayout(vars_header)
         layout.addWidget(self.variables_table)
         layout.addWidget(QLabel("Body"))
         layout.addWidget(self.body_edit)
@@ -78,6 +95,8 @@ class RequestEditor(QWidget):
 
         self.send_button.clicked.connect(self._on_send_clicked)
         self.validate_button.clicked.connect(self._on_validate_clicked)
+        self.save_variables_file_btn.clicked.connect(self._on_save_variables_to_file_clicked)
+        self.reload_variables_btn.clicked.connect(self._on_reload_variables_clicked)
         self.cancel_button.clicked.connect(self.cancel_requested.emit)
         self.method_combo.currentTextChanged.connect(self._on_edited)
         self.url_edit.textChanged.connect(self._on_edited)
@@ -190,9 +209,23 @@ class RequestEditor(QWidget):
         self._on_edited()
         self.validate_requested.emit(self._request)
 
+    def _on_save_variables_to_file_clicked(self) -> None:
+        if not self._request:
+            return
+        self._on_edited()
+        self.save_variables_to_file_requested.emit(self._request)
+
+    def _on_reload_variables_clicked(self) -> None:
+        if not self._request:
+            return
+        self._on_edited()
+        self.reload_variables_requested.emit(self._request)
+
     def set_busy(self, is_busy: bool) -> None:
         self.send_button.setEnabled(not is_busy)
         self.validate_button.setEnabled(not is_busy)
+        self.save_variables_file_btn.setEnabled(not is_busy)
+        self.reload_variables_btn.setEnabled(not is_busy)
         self.cancel_button.setVisible(is_busy)
         self.waiting_label.setVisible(is_busy)
 

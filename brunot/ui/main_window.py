@@ -10,6 +10,7 @@ from typing import Optional
 from PySide6.QtCore import QObject, QThread, Qt, Signal, qInstallMessageHandler
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QDialog,
     QFileDialog,
     QFormLayout,
@@ -30,9 +31,11 @@ from ..bru_parser import save_request_to_file
 from ..http_client import send_request
 from ..model import Collection, Request, create_empty_collection, load_collection
 from ..settings import Settings, load_settings, save_settings
+from ..variable_file_loader import merge_variable_file_entries, parse_variable_file, write_variable_file
 from .navigation import CollectionTree
 from .request_editor import RequestEditor
 from .response_viewer import ResponseViewer
+from .variable_files_dialog import VariableFilesDialog
 
 
 def _qt_message_handler(msg_type, context, message) -> None:
@@ -83,7 +86,12 @@ class RequestLogDialog(QDialog):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, current_timeout: int, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        current_timeout: int,
+        variable_preference: str,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
         layout = QVBoxLayout(self)
@@ -93,6 +101,14 @@ class SettingsDialog(QDialog):
         self.timeout_spin.setMaximum(600)
         self.timeout_spin.setValue(current_timeout)
         form.addRow(QLabel("Request timeout (seconds)"), self.timeout_spin)
+
+        self.variable_preference_combo = QComboBox()
+        self.variable_preference_combo.addItem("Prefer environment variables", "env")
+        self.variable_preference_combo.addItem("Prefer variable files", "files")
+        idx = self.variable_preference_combo.findData(variable_preference)
+        if idx >= 0:
+            self.variable_preference_combo.setCurrentIndex(idx)
+        form.addRow(QLabel("Variable resolution"), self.variable_preference_combo)
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -124,6 +140,8 @@ class MainWindow(QMainWindow):
         self.request_editor.validate_requested.connect(self.on_validate_request)
         self.request_editor.cancel_requested.connect(self.cancel_request_wait)
         self.request_editor.request_changed.connect(self.on_request_changed)
+        self.request_editor.save_variables_to_file_requested.connect(self.save_variables_to_variable_file)
+        self.request_editor.reload_variables_requested.connect(self.reload_variables_from_sources)
 
         splitter = QSplitter(Qt.Horizontal)
         right_widget = QWidget()
@@ -161,6 +179,8 @@ class MainWindow(QMainWindow):
         save_collection_action.triggered.connect(self.save_collection_as)
         settings_action = file_menu.addAction("&Settings...")
         settings_action.triggered.connect(self.open_settings)
+        variable_files_action = file_menu.addAction("Variable &files…")
+        variable_files_action.triggered.connect(self.open_variable_files)
 
         file_menu.addSeparator()
 
@@ -342,16 +362,49 @@ class MainWindow(QMainWindow):
         names.update(self._extract_variable_names_from_text(request.body or ""))
         return names
 
+    @staticmethod
+    def _resolve_variable_from_sources(
+        name: str, file_vars: dict[str, str], prefer_files: bool
+    ) -> str:
+        env_value = os.environ.get(name)
+        in_file = name in file_vars
+        if prefer_files:
+            if in_file:
+                return file_vars[name]
+            if env_value is not None:
+                return env_value
+            return ""
+        if env_value is not None:
+            return env_value
+        if in_file:
+            return file_vars[name]
+        return ""
+
     def _populate_request_variables_from_fields(self, request: Request) -> None:
         extracted_names = self._extract_request_variable_names(request)
         if not extracted_names:
             return
+        file_vars = merge_variable_file_entries(self.settings.variable_file_entries)
+        prefer_files = self.settings.variable_preference == "files"
+
         for name in sorted(extracted_names):
-            current_value = request.variables.get(name, "")
-            if current_value:
+            if request.variables.get(name, ""):
                 continue
-            env_value = os.environ.get(name)
-            request.variables[name] = env_value if env_value is not None else ""
+            request.variables[name] = self._resolve_variable_from_sources(
+                name, file_vars, prefer_files
+            )
+
+    def _reload_request_variables_from_sources(self, request: Request) -> None:
+        extracted_names = self._extract_request_variable_names(request)
+        if not extracted_names:
+            return
+        file_vars = merge_variable_file_entries(self.settings.variable_file_entries)
+        prefer_files = self.settings.variable_preference == "files"
+        for name in sorted(extracted_names):
+            request.variables[name] = self._resolve_variable_from_sources(
+                name, file_vars, prefer_files
+            )
+        request.dirty = True
 
     def _missing_required_variables(self, request: Request) -> list[str]:
         extracted_names = self._extract_request_variable_names(request)
@@ -565,13 +618,75 @@ class MainWindow(QMainWindow):
         self._log_dialog.raise_()
         self._log_dialog.activateWindow()
 
+    def save_variables_to_variable_file(self, request: Request) -> None:
+        """Persist request variable table into a user-chosen active variable file (explicit save only)."""
+        active = [e for e in self.settings.variable_file_entries if e.enabled]
+        if not active:
+            QMessageBox.information(
+                self,
+                "Save variables",
+                "You need at least one active variable file to save variables.\n"
+                "Open File → Variable files… and enable a file, or add one.",
+            )
+            return
+        labels = [f"{e.file_id} — {e.path}" for e in active]
+        choice, ok = QInputDialog.getItem(
+            self,
+            "Save variables to file",
+            "Choose an active variable file:",
+            labels,
+            0,
+            False,
+        )
+        if not ok:
+            return
+        idx = labels.index(choice)
+        entry = active[idx]
+        path = Path(entry.path).expanduser().resolve()
+        merged = dict(parse_variable_file(path))
+        merged.update(request.variables)
+        try:
+            write_variable_file(path, merged)
+        except OSError as exc:
+            QMessageBox.critical(self, "Save variables", str(exc))
+            return
+        self.statusBar().showMessage(f"Saved variables to {path}", 4000)
+
+    def reload_variables_from_sources(self, request: Request) -> None:
+        """Replace values for {{variables}} used in the request using env + files and Settings precedence."""
+        if not self._extract_request_variable_names(request):
+            self.statusBar().showMessage(
+                "No variables referenced in URL, headers, or body.",
+                4000,
+            )
+            return
+        self._reload_request_variables_from_sources(request)
+        self.request_editor.set_request(request)
+        pref = self.settings.variable_preference
+        label = "variable files, then environment" if pref == "files" else "environment, then variable files"
+        self.statusBar().showMessage(f"Variables reloaded ({label}).", 4000)
+
+    def open_variable_files(self) -> None:
+        dlg = VariableFilesDialog(self.settings.variable_file_entries, self)
+        if dlg.exec() == QDialog.Accepted:
+            self.settings.variable_file_entries = dlg.result_entries()
+            save_settings(self.settings)
+            self.statusBar().showMessage("Variable files saved.", 3000)
+
     def open_settings(self) -> None:
-        dialog = SettingsDialog(self.settings.request_timeout_seconds, self)
+        dialog = SettingsDialog(
+            self.settings.request_timeout_seconds,
+            self.settings.variable_preference,
+            self,
+        )
         if dialog.exec() == QDialog.Accepted:
             self.settings.request_timeout_seconds = dialog.timeout_spin.value()
+            self.settings.variable_preference = str(
+                dialog.variable_preference_combo.currentData()
+            )
             save_settings(self.settings)
             self.statusBar().showMessage(
-                f"Updated timeout to {self.settings.request_timeout_seconds} seconds.",
+                "Settings saved.",
                 3000,
             )
 
