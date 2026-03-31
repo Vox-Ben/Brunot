@@ -56,6 +56,8 @@ class VariableFilesDialog(QDialog):
         # Pending variable key/value sets per file_id (flushed to disk on OK).
         self._vars_cache: Dict[str, Dict[str, str]] = {}
         self._last_row: int = -1
+        # Which file_id the variables table is showing (never infer from row index after reorder).
+        self._displayed_file_id: Optional[str] = None
 
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_row_changed)
@@ -147,18 +149,21 @@ class VariableFilesDialog(QDialog):
         return list(self._entries)
 
     def _flush_current_table_to_cache(self) -> None:
-        row = self._list.currentRow()
-        if row < 0 or row >= len(self._entries):
+        if self._displayed_file_id is None:
             return
-        self._vars_cache[self._entries[row].file_id] = self._collect_vars_from_table()
+        self._vars_cache[self._displayed_file_id] = self._collect_vars_from_table()
 
     def _refresh_list(self) -> None:
         self._flush_current_table_to_cache()
-        self._list.clear()
-        for e in self._entries:
-            state = "on" if e.enabled else "off"
-            item = QListWidgetItem(f"[{state}] {e.file_id}\n{e.path}")
-            self._list.addItem(item)
+        self._list.blockSignals(True)
+        try:
+            self._list.clear()
+            for e in self._entries:
+                state = "on" if e.enabled else "off"
+                item = QListWidgetItem(f"[{state}] {e.file_id}\n{e.path}")
+                self._list.addItem(item)
+        finally:
+            self._list.blockSignals(False)
 
     def _update_move_buttons(self) -> None:
         row = self._list.currentRow()
@@ -186,9 +191,8 @@ class VariableFilesDialog(QDialog):
         return self._list.currentRow()
 
     def _on_row_changed(self, row: int) -> None:
-        if self._last_row >= 0 and self._last_row < len(self._entries):
-            prev = self._entries[self._last_row]
-            self._vars_cache[prev.file_id] = self._collect_vars_from_table()
+        if self._displayed_file_id is not None:
+            self._vars_cache[self._displayed_file_id] = self._collect_vars_from_table()
         self._last_row = row
 
         self._enabled_cb.blockSignals(True)
@@ -200,12 +204,14 @@ class VariableFilesDialog(QDialog):
                 self._id_edit.clear()
                 self._path_label.clear()
                 self._vars_table.setRowCount(0)
+                self._displayed_file_id = None
                 return
             e = self._entries[row]
             self._enabled_cb.setChecked(e.enabled)
             self._id_edit.setText(e.file_id)
             self._path_label.setText(str(Path(e.path).expanduser()))
             self._load_vars_table(e)
+            self._displayed_file_id = e.file_id
         finally:
             self._vars_table.blockSignals(False)
             self._id_edit.blockSignals(False)
@@ -257,9 +263,11 @@ class VariableFilesDialog(QDialog):
             self._id_edit.setText(self._entries[row].file_id)
             return
         old_id = self._entries[row].file_id
+        self._flush_current_table_to_cache()
         if old_id in self._vars_cache:
             self._vars_cache[new_id] = self._vars_cache.pop(old_id)
         self._entries[row].file_id = new_id
+        self._displayed_file_id = new_id
         self._refresh_list()
         self._list.setCurrentRow(row)
 
