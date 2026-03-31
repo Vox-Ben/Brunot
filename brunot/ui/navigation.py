@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QModelIndex, QObject, Qt, Signal
@@ -51,4 +52,26 @@ class CollectionTree(QTreeView):
         data = item.data(Qt.UserRole)
         if isinstance(data, Request):
             self.request_selected.emit(data)
+
+    def select_request_by_path(self, path: Path) -> bool:
+        """Expand tree and select the request whose file path matches."""
+        target = path.resolve()
+        for row in range(self._model.rowCount()):
+            item = self._model.item(row)
+            if item and self._select_request_under_item(item, target):
+                return True
+        return False
+
+    def _select_request_under_item(self, item: QStandardItem, target: Path) -> bool:
+        data = item.data(Qt.UserRole)
+        if isinstance(data, Request) and data.path and data.path.resolve() == target:
+            index = self._model.indexFromItem(item)
+            self.setCurrentIndex(index)
+            self.scrollTo(index)
+            return True
+        for row in range(item.rowCount()):
+            child = item.child(row)
+            if child and self._select_request_under_item(child, target):
+                return True
+        return False
 
