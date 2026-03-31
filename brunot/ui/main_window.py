@@ -330,6 +330,13 @@ class MainWindow(QMainWindow):
                 missing.append(name)
         return missing
 
+    def _content_type_header_value(self, request: Request) -> Optional[str]:
+        for key, value in request.headers.items():
+            if key.lower() == "content-type":
+                stripped = value.strip()
+                return stripped if stripped else None
+        return None
+
     # Request handling
     def on_request_selected(self, request: Request) -> None:
         self._current_request = request
@@ -343,6 +350,14 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Edited request: {request.name}", 2000)
 
     def on_validate_request(self, request: Request) -> None:
+        ct = self._content_type_header_value(request)
+        if ct is not None and "json" not in ct.lower():
+            self._populate_request_variables_from_fields(request)
+            self.request_editor.set_request(request)
+            self.request_editor.set_validation_result(None)
+            self.statusBar().showMessage("Validation skipped (non-JSON Content-Type).", 4000)
+            return
+
         try:
             body_text = request.body or ""
             if body_text.strip():
