@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, qInstallMessageHandler
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -24,6 +24,13 @@ from ..settings import Settings, load_settings, save_settings
 from .navigation import CollectionTree
 from .request_editor import RequestEditor
 from .response_viewer import ResponseViewer
+
+
+def _qt_message_handler(msg_type, context, message) -> None:
+    """Suppress noisy Qt warning emitted by some Linux window managers."""
+    if "This plugin supports grabbing the mouse only for popup windows" in message:
+        return
+    sys.stderr.write(f"{message}\n")
 
 
 class MainWindow(QMainWindow):
@@ -233,6 +240,7 @@ class MainWindow(QMainWindow):
 
 
 def run_app(argv: list[str]) -> None:
+    qInstallMessageHandler(_qt_message_handler)
     app = QApplication(sys.argv)
     settings = load_settings()
     window = MainWindow(settings)
