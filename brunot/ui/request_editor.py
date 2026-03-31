@@ -22,6 +22,7 @@ from ..model import Request
 
 class RequestEditor(QWidget):
     send_requested = Signal(Request)
+    validate_requested = Signal(Request)
     cancel_requested = Signal()
     request_changed = Signal(Request)
 
@@ -48,10 +49,12 @@ class RequestEditor(QWidget):
         self.body_edit = QTextEdit()
 
         self.send_button = QPushButton("Send")
+        self.validate_button = QPushButton("Validate request")
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setVisible(False)
         self.waiting_label = QLabel("Waiting for response...")
         self.waiting_label.setVisible(False)
+        self.validation_label = QLabel("")
 
         top_layout = QGridLayout()
         top_layout.addWidget(QLabel("Method"), 0, 0)
@@ -68,10 +71,13 @@ class RequestEditor(QWidget):
         layout.addWidget(QLabel("Body"))
         layout.addWidget(self.body_edit)
         layout.addWidget(self.waiting_label)
+        layout.addWidget(self.validation_label)
+        layout.addWidget(self.validate_button, alignment=Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self.cancel_button, alignment=Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self.send_button, alignment=Qt.AlignmentFlag.AlignRight)
 
         self.send_button.clicked.connect(self._on_send_clicked)
+        self.validate_button.clicked.connect(self._on_validate_clicked)
         self.cancel_button.clicked.connect(self.cancel_requested.emit)
         self.method_combo.currentTextChanged.connect(self._on_edited)
         self.url_edit.textChanged.connect(self._on_edited)
@@ -168,6 +174,7 @@ class RequestEditor(QWidget):
         self._request.variables = self._collect_key_value_table(self.variables_table)
         self._request.body = self.body_edit.toPlainText()
         self._request.dirty = True
+        self.set_validation_result(None)
         self.request_changed.emit(self._request)
 
     def _on_send_clicked(self) -> None:
@@ -177,8 +184,27 @@ class RequestEditor(QWidget):
         self._on_edited()
         self.send_requested.emit(self._request)
 
+    def _on_validate_clicked(self) -> None:
+        if not self._request:
+            return
+        self._on_edited()
+        self.validate_requested.emit(self._request)
+
     def set_busy(self, is_busy: bool) -> None:
         self.send_button.setEnabled(not is_busy)
+        self.validate_button.setEnabled(not is_busy)
         self.cancel_button.setVisible(is_busy)
         self.waiting_label.setVisible(is_busy)
+
+    def set_validation_result(self, is_valid: Optional[bool]) -> None:
+        if is_valid is None:
+            self.validation_label.setText("")
+            self.validation_label.setStyleSheet("")
+            return
+        if is_valid:
+            self.validation_label.setText("Request valid")
+            self.validation_label.setStyleSheet("color: green; font-weight: 600;")
+        else:
+            self.validation_label.setText("Invalid request")
+            self.validation_label.setStyleSheet("color: red; font-weight: 600;")
 
