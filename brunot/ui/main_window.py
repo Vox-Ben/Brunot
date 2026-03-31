@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -120,6 +121,7 @@ class MainWindow(QMainWindow):
 
         self.tree.request_selected.connect(self.on_request_selected)
         self.request_editor.send_requested.connect(self.on_send_request)
+        self.request_editor.validate_requested.connect(self.on_validate_request)
         self.request_editor.cancel_requested.connect(self.cancel_request_wait)
         self.request_editor.request_changed.connect(self.on_request_changed)
 
@@ -294,9 +296,51 @@ class MainWindow(QMainWindow):
 
         return pattern.sub(repl, value)
 
+    def _extract_variable_names_from_text(self, text: str) -> set[str]:
+        if not text:
+            return set()
+        pattern = re.compile(r"\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}")
+        return set(pattern.findall(text))
+
+    def _extract_request_variable_names(self, request: Request) -> set[str]:
+        names: set[str] = set()
+        names.update(self._extract_variable_names_from_text(request.url))
+        for value in request.headers.values():
+            names.update(self._extract_variable_names_from_text(value))
+        names.update(self._extract_variable_names_from_text(request.body or ""))
+        return names
+
+    def _populate_request_variables_from_fields(self, request: Request) -> None:
+        extracted_names = self._extract_request_variable_names(request)
+        if not extracted_names:
+            return
+        for name in sorted(extracted_names):
+            current_value = request.variables.get(name, "")
+            if current_value:
+                continue
+            env_value = os.environ.get(name)
+            request.variables[name] = env_value if env_value is not None else ""
+
+    def _missing_required_variables(self, request: Request) -> list[str]:
+        extracted_names = self._extract_request_variable_names(request)
+        missing: list[str] = []
+        for name in sorted(extracted_names):
+            value = request.variables.get(name, "")
+            if not str(value).strip():
+                missing.append(name)
+        return missing
+
+    def _content_type_header_value(self, request: Request) -> Optional[str]:
+        for key, value in request.headers.items():
+            if key.lower() == "content-type":
+                stripped = value.strip()
+                return stripped if stripped else None
+        return None
+
     # Request handling
     def on_request_selected(self, request: Request) -> None:
         self._current_request = request
+        self._populate_request_variables_from_fields(request)
         try:
             self.request_editor.set_request(request)
         except Exception as exc:
@@ -304,6 +348,29 @@ class MainWindow(QMainWindow):
 
     def on_request_changed(self, request: Request) -> None:
         self.statusBar().showMessage(f"Edited request: {request.name}", 2000)
+
+    def on_validate_request(self, request: Request) -> None:
+        ct = self._content_type_header_value(request)
+        if ct is not None and "json" not in ct.lower():
+            self._populate_request_variables_from_fields(request)
+            self.request_editor.set_request(request)
+            self.request_editor.set_validation_result(None)
+            self.statusBar().showMessage("Validation skipped (non-JSON Content-Type).", 4000)
+            return
+
+        try:
+            body_text = request.body or ""
+            if body_text.strip():
+                json.loads(body_text)
+        except Exception:
+            self.request_editor.set_validation_result(False)
+            self.statusBar().showMessage("Invalid request body.", 3000)
+            return
+
+        self._populate_request_variables_from_fields(request)
+        self.request_editor.set_request(request)
+        self.request_editor.set_validation_result(True)
+        self.statusBar().showMessage("Request body is valid.", 3000)
 
     def new_request(self) -> None:
         request_name, ok = QInputDialog.getText(self, "New Request", "Request name:")
@@ -349,6 +416,17 @@ class MainWindow(QMainWindow):
 
     def on_send_request(self, request: Request) -> None:
         if self._active_thread is not None:
+            return
+        self._populate_request_variables_from_fields(request)
+        missing_variables = self._missing_required_variables(request)
+        if missing_variables:
+            joined = ", ".join(missing_variables)
+            self.request_editor.set_validation_result(False)
+            QMessageBox.warning(
+                self,
+                "Missing Variables",
+                f"Populate all variables before sending.\nMissing: {joined}",
+            )
             return
         self._active_request_id += 1
         request_id = self._active_request_id
