@@ -41,11 +41,12 @@ def _qt_message_handler(msg_type, context, message) -> None:
 
 
 class RequestWorker(QObject):
-    finished = Signal(object)
-    failed = Signal(str)
+    finished = Signal(int, object)
+    failed = Signal(int, str)
 
-    def __init__(self, request: Request, timeout_seconds: int) -> None:
+    def __init__(self, request_id: int, request: Request, timeout_seconds: int) -> None:
         super().__init__()
+        self.request_id = request_id
         self.request = request
         self.timeout_seconds = timeout_seconds
 
@@ -59,9 +60,9 @@ class RequestWorker(QObject):
                 body=self.request.body or "",
                 timeout=float(self.timeout_seconds),
             )
-            self.finished.emit(response)
+            self.finished.emit(self.request_id, response)
         except Exception as exc:
-            self.failed.emit(str(exc))
+            self.failed.emit(self.request_id, str(exc))
 
 
 class RequestLogDialog(QDialog):
@@ -107,6 +108,7 @@ class MainWindow(QMainWindow):
         self._active_thread: Optional[QThread] = None
         self._active_worker: Optional[RequestWorker] = None
         self._active_request_id = 0
+        self._active_request: Optional[Request] = None
         self._log_dialog = RequestLogDialog(self)
 
         self.setWindowTitle("Brunot")
@@ -351,11 +353,12 @@ class MainWindow(QMainWindow):
         )
 
         thread = QThread(self)
-        worker = RequestWorker(request, timeout)
+        self._active_request = request
+        worker = RequestWorker(request_id, request, timeout)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.finished.connect(lambda resp: self._on_request_finished(request_id, request, resp))
-        worker.failed.connect(lambda error: self._on_request_failed(request_id, request, error))
+        worker.finished.connect(self._on_request_finished)
+        worker.failed.connect(self._on_request_failed)
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
@@ -373,8 +376,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Request wait cancelled.", 3000)
         self._log_request_event("REQUEST_CANCELLED", {"message": "User cancelled waiting for response."})
 
-    def _on_request_finished(self, request_id: int, request: Request, resp) -> None:
+    def _on_request_finished(self, request_id: int, resp) -> None:
         if request_id != self._active_request_id:
+            return
+        request = self._active_request
+        if request is None:
             return
         self.request_editor.set_busy(False)
         self.response_viewer.show_response(resp)
@@ -392,8 +398,11 @@ class MainWindow(QMainWindow):
             },
         )
 
-    def _on_request_failed(self, request_id: int, request: Request, error: str) -> None:
+    def _on_request_failed(self, request_id: int, error: str) -> None:
         if request_id != self._active_request_id:
+            return
+        request = self._active_request
+        if request is None:
             return
         self.request_editor.set_busy(False)
         QMessageBox.critical(self, "Request Error", error)
@@ -410,6 +419,7 @@ class MainWindow(QMainWindow):
     def _on_request_thread_finished(self) -> None:
         self._active_thread = None
         self._active_worker = None
+        self._active_request = None
 
     def show_request_log(self) -> None:
         self._log_dialog.show()
