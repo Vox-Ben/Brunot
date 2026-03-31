@@ -329,8 +329,8 @@ class MainWindow(QMainWindow):
                     return
             save_request_to_file(self._current_request)
             self.statusBar().showMessage(f"Saved request: {self._current_request.name}", 2000)
-            if self.collection and self.collection.root_path:
-                self.reload_collection()
+            if self.collection:
+                self.tree.set_collection(self.collection)
         except Exception as exc:
             QMessageBox.critical(self, "Save Error", f"Failed to save request:\n{exc}")
 
