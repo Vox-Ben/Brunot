@@ -6,6 +6,15 @@ from typing import Dict, List, Optional
 
 
 HttpMethod = str
+SKIP_DIR_NAMES = {
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "node_modules",
+    ".mypy_cache",
+    ".pytest_cache",
+}
 
 
 @dataclass
@@ -41,18 +50,37 @@ def load_collection(root_path: Path) -> Collection:
 
     root_path = root_path.resolve()
     collection = Collection(root_path=root_path, name=root_path.name)
+    visited_dirs: set[Path] = set()
 
     def walk_dir(path: Path) -> Folder:
         folder = Folder(name=path.name, path=path)
-        for entry in sorted(path.iterdir(), key=lambda p: p.name):
-            # Avoid recursive loops and expensive traversal through symlinked directories.
-            if entry.is_symlink():
+        try:
+            real_path = path.resolve()
+        except OSError:
+            return folder
+        if real_path in visited_dirs:
+            return folder
+        visited_dirs.add(real_path)
+
+        try:
+            entries = sorted(path.iterdir(), key=lambda p: p.name)
+        except (OSError, PermissionError):
+            return folder
+
+        for entry in entries:
+            if entry.name in SKIP_DIR_NAMES or entry.name.startswith("."):
                 continue
-            if entry.is_dir():
-                folder.folders.append(walk_dir(entry))
-            elif entry.is_file() and entry.suffix == ".bru":
-                req = load_request_from_file(entry)
-                folder.requests.append(req)
+            # Avoid recursive loops and expensive traversal through symlinked directories.
+            try:
+                if entry.is_symlink():
+                    continue
+                if entry.is_dir():
+                    folder.folders.append(walk_dir(entry))
+                elif entry.is_file() and entry.suffix == ".bru":
+                    req = load_request_from_file(entry)
+                    folder.requests.append(req)
+            except (OSError, PermissionError):
+                continue
         return folder
 
     collection.folders.append(walk_dir(root_path))
