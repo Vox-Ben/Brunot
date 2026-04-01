@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools==75.6.0", "wheel==0.43.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,14 +12,14 @@ authors = [
   { name = "Brunot Contributors" }
 ]
 dependencies = [
-  "httpx>=0.27.0",
-  "PySide6>=6.7.0",
-  "platformdirs>=4.0.0",
+  "httpx==0.28.1",
+  "PySide6==6.11.0",
+  "platformdirs==4.9.4",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.0",
+  "pytest==9.0.2",
 ]
 
 [project.scripts]
